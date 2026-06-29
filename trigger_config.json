@@ -6,36 +6,90 @@
   "navigation": {
     "mode": "coordinate",
     "selectChat": {
-      "coordinates": { "x": 163, "y": 408 },
+      "coordinates": {
+        "x": 284,
+        "y": 124,
+        "description": "Sidebar: 'Discord Chat' entry"
+      },
       "description": "Sidebar: 'Discord Chat' entry"
     },
     "focusInput": {
-      "coordinates": { "x": 580, "y": 839 },
-      "description": "Chat input area"
+      "coordinates": {
+        "x": 798,
+        "y": 1010,
+        "description": "Chat input area (bottom of Cola)"
+      },
+      "description": "Chat input area (bottom of Cola)"
     },
     "modelSelector": {
-      "coordinates": { "x": 766, "y": 878 },
+      "coordinates": {
+        "x": 1441,
+        "y": 1050,
+        "description": "Model selector button (e.g. 'Lite')"
+      },
       "description": "Model selector button (e.g. 'Lite')"
     },
     "modSelector": {
-      "coordinates": null,
-      "description": "Mod selector at top-left of Cola — CALIBRATE with find_coords.py"
+      "coordinates": {
+        "x": 1508,
+        "y": 126,
+        "description": "Mod selector button (top-left of Cola)"
+      },
+      "description": "Mod selector button (top-left of Cola)"
     }
   },
   "modelPositions": {
-    "max":    { "x": 500, "y": 450, "description": "Model: Max — CALIBRATE" },
-    "pro":    { "x": 500, "y": 520, "description": "Model: Pro — CALIBRATE" },
-    "lite":   { "x": 500, "y": 590, "description": "Model: Lite — CALIBRATE" },
-    "code":   { "x": 500, "y": 660, "description": "Model: Code — CALIBRATE" },
-    "glm":    { "x": 500, "y": 730, "description": "Model: GLM 5.2 — CALIBRATE" },
-    "doubao": { "x": 500, "y": 800, "description": "Model: Doubao Seed — CALIBRATE" }
+    "max": {
+      "x": 500,
+      "y": 450,
+      "description": "Model: Max \u00e2\u20ac\u201d CALIBRATE"
+    },
+    "pro": {
+      "x": 500,
+      "y": 520,
+      "description": "Model: Pro \u00e2\u20ac\u201d CALIBRATE"
+    },
+    "lite": {
+      "x": 500,
+      "y": 590,
+      "description": "Model: Lite \u00e2\u20ac\u201d CALIBRATE"
+    },
+    "code": {
+      "x": 500,
+      "y": 660,
+      "description": "Model: Code \u00e2\u20ac\u201d CALIBRATE"
+    },
+    "glm": {
+      "x": 500,
+      "y": 730,
+      "description": "Model: GLM 5.2 \u00e2\u20ac\u201d CALIBRATE"
+    },
+    "doubao": {
+      "x": 500,
+      "y": 800,
+      "description": "Model: Doubao Seed \u00e2\u20ac\u201d CALIBRATE"
+    }
   },
   "switchMod": {
-    "cola":      { "x": null, "y": null, "description": "Switch Mod modal: Cola card — CALIBRATE" },
-    "vibe_cola": { "x": null, "y": null, "description": "Switch Mod modal: Vibe Cola card — CALIBRATE" }
+    "cola": {
+      "x": 771,
+      "y": 580,
+      "description": "Switch Mod modal: Cola (orange card)"
+    },
+    "vibe_cola": {
+      "x": 1153,
+      "y": 574,
+      "description": "Switch Mod modal: Vibe Cola (anime card)"
+    }
   },
   "modSettings": {
-    "normal":    { "displayName": "Cola",      "description": "Coding-focused, technical" },
-    "vibe_cola": { "displayName": "Vibe Cola", "description": "Casual, anime-style companion" }
+    "normal": {
+      "displayName": "Cola",
+      "description": "Coding-focused, technical"
+    },
+    "vibe_cola": {
+      "displayName": "Vibe Cola",
+      "description": "Casual, anime-style companion"
+    }
   }
 }
