@@ -78,33 +78,44 @@ def activate_window(hwnd):
 
 # ── Cola launch ────────────────────────────────────────────────────────
 def launch_cola(retries=30, retry_ms=2000):
-    """Launch Cola via Win+R, wait for window to appear."""
+    """Launch Cola via Win key, wait for window to appear."""
     import pyautogui, pyperclip
-    print("  🚀 Launching Cola...")
+    print(f"{'─' * 50}")
+    print(f"  🚀 COLA NOT RUNNING — launching...")
     pyautogui.hotkey("win")
     time.sleep(0.3)
     pyperclip.copy("Cola")
     pyautogui.hotkey("ctrl", "v")
+    print(f"  📋 Typed 'Cola' into Start menu")
     time.sleep(0.3)
     pyautogui.press("enter")
-    time.sleep(0.5)
+    time.sleep(1)
 
     for i in range(retries):
         hwnd, _ = find_cola_window()
         if hwnd:
             activate_window(hwnd)
-            print(f"  ✅ Cola launched (waited {(i+1)*retry_ms/1000:.0f}s)")
+            elapsed = (i + 1) * retry_ms / 1000
+            print(f"  ✅ Cola appeared after {elapsed:.0f}s")
+            print(f"{'─' * 50}")
             return True
+        if i == 0:
+            print(f"  ⏳ Waiting for Cola window...")
+        if i % 5 == 4:
+            print(f"     ...still waiting ({((i+1)*retry_ms/1000):.0f}s)")
         time.sleep(retry_ms / 1000)
 
-    print("  ✗ Cola did not start within timeout")
+    print(f"  ❌ Cola did not start within {retries * retry_ms / 1000:.0f}s")
+    print(f"{'─' * 50}")
     return False
 
 def ensure_cola_running():
-    """Find Cola window or launch it."""
+    """Find Cola window or launch it. Returns (hwnd, was_already_running)."""
     hwnd, _ = find_cola_window()
     if hwnd:
-        return hwnd, True  # already running
+        print(f"  ✅ Cola already running")
+        return hwnd, True
+    print(f"  🔍 Cola window not found")
     return None, launch_cola()
 
 # ── Mouse / keyboard ───────────────────────────────────────────────────
@@ -123,30 +134,36 @@ def paste_and_send(text):
 
 # ── Chat selection with image fallback ─────────────────────────────────
 def select_chat():
-    """Click the 'Discord Chat' entry in sidebar. Tries coordinates first, then image recognition."""
+    """Click the chat entry. Tries coordinates first, then image recognition."""
     nav = config.get("navigation", {})
 
     # 1. Try coordinates
     coords = nav.get("selectChat", {}).get("coordinates", {})
     if coords.get("x") and coords.get("y"):
+        print(f"  🖱  Clicking chat at ({coords['x']}, {coords['y']})")
         click_at(coords["x"], coords["y"], 300)
         return True
 
     # 2. Try image recognition
     if CHAT_ICON.exists():
+        print(f"  🔍 Coordinates not set, trying image recognition...")
         import pyautogui
         try:
             loc = pyautogui.locateOnScreen(str(CHAT_ICON), confidence=0.8)
             if loc:
                 cx = loc.left + loc.width // 2
                 cy = loc.top + loc.height // 2
+                print(f"  ✅ Found chat icon at ({cx}, {cy})")
                 click_at(cx, cy, 300)
                 return True
+            else:
+                print(f"  ⚠ Icon not found on screen")
         except Exception as e:
-            print(f"  ⚠ Image recognition failed: {e}")
+            print(f"  ⚠ Image recognition error: {e}")
+    else:
+        print(f"  ⚠ No chat_sidebar_icon.png found either")
 
-    print("  ✗ Cannot find chat — no coordinates or icon configured.")
-    print("  → Run: py find_coords.py")
+    print(f"  ❌ Cannot select chat — run: py find_coords.py")
     return False
 
 # ── Model switching ────────────────────────────────────────────────────
@@ -156,18 +173,20 @@ def change_model(target):
     models = config.get("modelPositions", {})
 
     if not sel.get("x"):
-        print("  ✗ modelSelector not configured"); return False
+        print(f"  ❌ modelSelector not configured — run find_coords.py, press 3"); return False
     if target not in models or not models[target].get("x"):
-        print(f"  ✗ Model '{target}' position not in config"); return False
+        print(f"  ❌ Model '{target}' position not in config — run find_coords.py, press 4-9"); return False
 
-    click_at(sel["x"], sel["y"], 800)   # open panel
-    click_at(models[target]["x"], models[target]["y"], 500)  # select
+    print(f"  🖱  Opening model panel at ({sel['x']}, {sel['y']})")
+    click_at(sel["x"], sel["y"], 800)
+    print(f"  🖱  Selecting '{target}' at ({models[target]['x']}, {models[target]['y']})")
+    click_at(models[target]["x"], models[target]["y"], 500)
     print(f"  ✅ Model → {target}")
     return True
 
 # ── Mod switching ──────────────────────────────────────────────────────
 def switch_mod(target_mod):
-    """Switch Cola mod by clicking the mod selector → clicking target mod card."""
+    """Switch Cola mod by clicking mod selector → clicking target mod card."""
     nav = config.get("navigation", {})
     switch = config.get("switchMod", {})
 
@@ -175,13 +194,13 @@ def switch_mod(target_mod):
     target = switch.get(target_mod, {})
 
     if not sel.get("x"):
-        print("  ✗ modSelector not configured"); return False
+        print(f"  ❌ modSelector not configured — run find_coords.py, press 0"); return False
     if not target.get("x"):
-        print(f"  ✗ Mod '{target_mod}' position not in config"); return False
+        print(f"  ❌ Mod '{target_mod}' position not in config — run find_coords.py, press m/n"); return False
 
-    # Click mod selector to open Switch Mod modal
+    print(f"  🖱  Opening Switch Mod modal at ({sel['x']}, {sel['y']})")
     click_at(sel["x"], sel["y"], 600)
-    # Click target mod card
+    print(f"  🖱  Clicking '{target_mod}' card at ({target['x']}, {target['y']})")
     click_at(target["x"], target["y"], 500)
     print(f"  ✅ Mod → {target_mod}")
     return True
@@ -208,23 +227,32 @@ def process_messages():
     if not pending: return 0
 
     hwnd, running = ensure_cola_running()
-    if not hwnd: return 0
+    if not hwnd:
+        print(f"  ❌ Cannot proceed — Cola not running")
+        return 0
 
     prefix = config.get("triggerPrefix", "[Discord]")
     nav = config.get("navigation", {})
 
+    print(f"{'─' * 50}")
+    print(f"  📨 Processing {len(pending)} message(s)")
+
     select_chat()
     inp = nav.get("focusInput", {}).get("coordinates", {})
     if inp.get("x"):
+        print(f"  🖱  Clicking input at ({inp['x']}, {inp['y']})")
         click_at(inp["x"], inp["y"], 200)
 
-    for msg in pending:
+    for i, msg in enumerate(pending):
         text = f"{prefix} {msg.get('author', 'Cherrie')}: {msg.get('content', '')}"
         preview = text[:80] + ("..." if len(text) > 80 else "")
-        print(f"  → {preview}")
+        print(f"  [{i+1}/{len(pending)}] 💬 {preview}")
         paste_and_send(text)
         time.sleep(0.3)
-        print("  ✓ Sent")
+        print(f"       ✅ Sent")
+
+    print(f"  📝 Archived to triggered.jsonl")
+    print(f"{'─' * 50}")
 
     for m in pending:
         m["triggeredAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -238,12 +266,17 @@ def process_commands():
     if not cmds: return 0
 
     hwnd, running = ensure_cola_running()
-    if not hwnd: return 0
+    if not hwnd:
+        print(f"  ❌ Cannot process commands — Cola not running")
+        return 0
 
-    print(f"Processing {len(cmds)} command(s)")
-    for cmd in cmds:
+    print(f"{'─' * 50}")
+    print(f"  ⚡ Processing {len(cmds)} command(s)")
+    for i, cmd in enumerate(cmds):
         ctype = cmd.get("command", "")
         result = {"command": ctype, "success": False}
+
+        print(f"  [{i+1}/{len(cmds)}] Command: {ctype}")
 
         if ctype == "change_model":
             target = cmd.get("target", "")
@@ -257,9 +290,9 @@ def process_commands():
 
         elif ctype == "relaunch_cola":
             import pyautogui, pyperclip
-            # Close existing Cola windows
             hwnd, _ = find_cola_window()
             if hwnd:
+                print(f"  🔒 Closing existing Cola...")
                 user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
                 time.sleep(2)
             result["success"] = launch_cola()
@@ -267,8 +300,10 @@ def process_commands():
         result["completedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         result["channelId"] = cmd.get("channelId", "")
         append_jsonl(RESULTS_FILE, result)
+        print(f"       Result: {'✅ success' if result['success'] else '❌ failed'}")
 
     clear_file(COMMANDS_FILE)
+    print(f"{'─' * 50}")
     return len(cmds)
 
 # ── Main ───────────────────────────────────────────────────────────────
