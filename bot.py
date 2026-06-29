@@ -56,38 +56,56 @@ def get_gateway_token():
 # ═══════════════════════════════════════════════════════════════════════
 
 async def ws_inject_prompt(text: str) -> bool:
-    """Send agent.prompt to Cola via WebSocket."""
+    """Send agent.prompt to Cola via WebSocket. Retries once on failure."""
     token = get_gateway_token()
     if not token:
-        print("   ❌ No gateway token found")
+        print("   ❌ No gateway token at ~/.cola/gateway-token")
+        print("   → Is Cola installed? Run Cola once to generate the token.")
         return False
+
     url = f"{COLA_WS_URL}?token={token}"
-    try:
-        async with websockets.connect(url, close_timeout=5, ping_interval=None) as ws:
-            req = {
-                "method": "agent.prompt",
-                "id": f"discord_{int(time.time()*1000)}",
-                "params": {
-                    "scope": COLA_SCOPE,
-                    "text": text,
-                    "attachments": [],
-                    "hidden": False,
-                },
-            }
-            await ws.send(json.dumps(req))
-            # Wait briefly for acknowledgment
-            try:
-                ack = await asyncio.wait_for(ws.recv(), timeout=3)
-                data = json.loads(ack)
-                if data.get("type") == "error":
-                    print(f"   ❌ WS error: {data.get('error', '')}")
-                    return False
-            except asyncio.TimeoutError:
-                pass  # async — no immediate ack is fine
-            return True
-    except Exception as e:
-        print(f"   ❌ WS failed: {e}")
-        return False
+
+    for attempt in range(2):
+        try:
+            async with websockets.connect(url, close_timeout=5, ping_interval=None) as ws:
+                req = {
+                    "method": "agent.prompt",
+                    "id": f"discord_{int(time.time()*1000)}",
+                    "params": {
+                        "scope": COLA_SCOPE,
+                        "text": text,
+                        "attachments": [],
+                        "hidden": False,
+                    },
+                }
+                await ws.send(json.dumps(req))
+                try:
+                    ack = await asyncio.wait_for(ws.recv(), timeout=3)
+                    data = json.loads(ack)
+                    if data.get("type") == "error":
+                        print(f"   ❌ WS error: {data.get('error', data)}")
+                        return False
+                except asyncio.TimeoutError:
+                    pass
+                return True
+        except websockets.exceptions.InvalidStatus as e:
+            if e.response.status_code == 401:
+                # Token might have changed — re-read once
+                token = get_gateway_token()
+                url = f"{COLA_WS_URL}?token={token}"
+                if attempt == 0:
+                    print(f"   🔄 Token rejected, retrying with fresh read...")
+                    continue
+            print(f"   ❌ WS rejected (401) — token mismatch")
+            return False
+        except Exception as e:
+            if attempt == 0:
+                print(f"   🔄 WS retry: {e}")
+                await asyncio.sleep(1)
+                continue
+            print(f"   ❌ WS failed: {e}")
+            return False
+    return False
 
 # ═══════════════════════════════════════════════════════════════════════
 # Session watcher
