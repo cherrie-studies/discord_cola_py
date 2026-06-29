@@ -46,6 +46,7 @@ if env_file.exists():
             os.environ[k.strip()] = v.strip().strip('"').strip("'")
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
+DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK", "")  # optional: replies appear as "Cola"
 ALLOWED_CHANNELS = os.getenv("DISCORD_CHANNEL_IDS", "1519719204071280640").split(",")
 
 # Load trigger config
@@ -244,12 +245,32 @@ class ColaBridge(discord.Client):
         if response:
             preview = response[:100].replace("\n", " ")
             print(f"   🤖 Response: {preview}...")
-            for chunk in [response[i:i+1900] for i in range(0, len(response), 1900)]:
-                await message.reply(chunk)
-            print(f"   ✅ Sent")
+            await self.send_reply(message, response)
         else:
             await message.reply("⏰ Cola didn't respond in time.")
             print(f"   ❌ Timeout")
+
+    async def send_reply(self, message: discord.Message, text: str):
+        """Send reply via webhook (appears as 'Cola') or fallback to bot reply."""
+        if DISCORD_WEBHOOK:
+            try:
+                webhook = discord.Webhook.from_url(DISCORD_WEBHOOK, client=self)
+                # Split long messages
+                for chunk in [text[i:i+1900] for i in range(0, len(text), 1900)]:
+                    await webhook.send(
+                        content=chunk,
+                        username="Cola",
+                        avatar_url="https://cdn.colaos.ai/cola-avatar.png",
+                        wait=True,
+                    )
+                print("   ✅ Sent as Cola (webhook)")
+                return
+            except Exception as e:
+                print(f"   ⚠ Webhook failed: {e}, falling back to bot reply")
+        # Fallback: regular bot reply
+        for chunk in [text[i:i+1900] for i in range(0, len(text), 1900)]:
+            await message.reply(chunk)
+        print("   ✅ Sent as bot")
 
 # ═══════════════════════════════════════════════════════════════════════
 # Entry
