@@ -1,18 +1,26 @@
 """
-discord_trigger.py — Inject Discord messages into ColaOS via keyboard simulation
+discord_trigger.py — Inject Discord messages into ColaOS via mouse + keyboard
 
 Reads pending messages from ~/.cola/channels/discord/pending.jsonl,
-activates the Cola window, navigates to the configured chat session,
-pastes the message, and presses Enter.
+activates the Cola window, uses image recognition to find and click
+the target chat in the sidebar, then pastes the message and presses Enter.
 
-Config: trigger_config.json (mod, chatName, navigation shortcuts)
+Config: trigger_config.json
+  - navigation.mode = "image": uses pyautogui.locateOnScreen()
+  - navigation.selectChat.image: screenshot of the chat entry in sidebar
+  - navigation.focusInput.windowRelative: where to click for input focus
+
+Setup:
+  1. Screenshot only the "Discord Integration" text in Cola's sidebar
+  2. Save as chat_sidebar_icon.png next to this script
+  3. Run: python discord_trigger.py --watch
 
 Usage:
     python discord_trigger.py           # run once
     python discord_trigger.py --watch   # poll every 2s
 
 Dependencies:
-    pip install pyautogui pyperclip
+    pip install pyautogui pyperclip opencv-python pillow
 """
 
 import json
@@ -38,15 +46,22 @@ POLL_INTERVAL_S = 2
 def load_config() -> dict:
     if CONFIG_FILE.exists():
         return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-    # Defaults
     return {
         "mod": "normal",
         "chatName": "Discord Integration",
         "triggerPrefix": "[Discord]",
         "navigation": {
-            "clearSearch": {"keys": ["escape"], "waitMs": 200},
-            "activateChat": {"keys": ["ctrl", "k"]},
-            "typeAndSelect": {"waitAfterTypeMs": 500},
+            "mode": "image",
+            "selectChat": {
+                "method": "locateOnScreen",
+                "image": "chat_sidebar_icon.png",
+                "confidence": 0.8,
+                "clickOffset": {"x": 0, "y": 0},
+            },
+            "focusInput": {
+                "method": "clickAt",
+                "windowRelative": {"x": 0.5, "y": 0.9},
+            },
         },
     }
 
@@ -57,99 +72,150 @@ config = load_config()
 # ── Win32 helpers ──────────────────────────────────────────────────────
 user32 = ctypes.windll.user32
 
-SW_RESTORE = 9
-
 
 def find_cola_window():
-    """Find Cola's main window handle. Returns hwnd or None."""
+    """Find Cola's main window. Returns (hwnd, rect) or (None, None)."""
     hwnd = user32.FindWindowW(COLA_CLASS, COLA_TITLE)
-    if hwnd:
-        return hwnd
-    # Fallback: enumerate windows
-    result = []
-
-    def enum_callback(hwnd, lparam):
-        length = user32.GetWindowTextLengthW(hwnd)
-        if length == 0:
-            return True
-        buf = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, buf, length + 1)
-        if buf.value and "Cola" in buf.value:
-            result.append(hwnd)
-            return False
-        return True
-
-    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
-    user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
-    return result[0] if result else None
-
-
-def activate_cola_window():
-    """Bring Cola window to foreground."""
-    hwnd = find_cola_window()
     if not hwnd:
-        print("  ✗ Cola window not found. Is Cola running?")
+        # Fallback: enumerate
+        result = []
+
+        def enum_callback(hwnd, lparam):
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length == 0:
+                return True
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            if buf.value and "Cola" in buf.value:
+                result.append(hwnd)
+                return False
+            return True
+
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+        user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
+        hwnd = result[0] if result else None
+
+    if not hwnd:
+        return None, None
+
+    # Get window rect
+    class RECT(ctypes.Structure):
+        _fields_ = [
+            ("left", ctypes.c_long),
+            ("top", ctypes.c_long),
+            ("right", ctypes.c_long),
+            ("bottom", ctypes.c_long),
+        ]
+
+    rect = RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    return hwnd, rect
+
+
+def activate_cola_window(hwnd) -> bool:
+    """Bring Cola window to foreground."""
+    if not hwnd:
         return False
-    user32.ShowWindow(hwnd, SW_RESTORE)
+    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
     user32.SetForegroundWindow(hwnd)
     time.sleep(0.5)
     return True
 
 
-def send_key_combo(*keys, wait_ms: int = 300):
-    """Press a key combination (e.g. ctrl+k) using pyautogui."""
+# ── Image-based navigation ─────────────────────────────────────────────
+def find_chat_on_screen() -> tuple | None:
+    """Find the target chat entry using image recognition. Returns (x, y) center or None."""
     import pyautogui
-    pyautogui.hotkey(*keys)
-    time.sleep(wait_ms / 1000.0)
 
-
-def type_text(text: str, wait_ms: int = 0):
-    """Type text via clipboard + Ctrl+V."""
-    import pyautogui
-    import pyperclip
-    pyperclip.copy(text)
-    pyautogui.hotkey("ctrl", "v")
-    if wait_ms:
-        time.sleep(wait_ms / 1000.0)
-
-
-# ── Cola UI navigation ─────────────────────────────────────────────────
-def navigate_to_chat(chat_name: str) -> bool:
-    """Navigate to the target chat session in Cola via keyboard shortcuts."""
     nav = config.get("navigation", {})
+    select = nav.get("selectChat", {})
+    image_name = select.get("image", "chat_sidebar_icon.png")
+    confidence = select.get("confidence", 0.8)
 
-    # Step 1: Clear any open menus/modals (press Escape)
-    clear = nav.get("clearSearch", {})
-    if clear.get("keys"):
-        send_key_combo(*clear["keys"], wait_ms=clear.get("waitMs", 200))
+    # Resolve image path: try script dir, then channels dir
+    image_path = SCRIPT_DIR / image_name
+    if not image_path.exists():
+        alt = Path.home() / ".cola" / "channels" / "discord" / image_name
+        if alt.exists():
+            image_path = alt
+        else:
+            print(f"  ✗ Image not found: {image_path}")
+            print(f"  → Screenshot the 'Discord Integration' text in Cola's sidebar")
+            print(f"  → Save as: {image_path}")
+            return None
 
-    # Step 2: Open command palette / chat switcher
-    activate = nav.get("activateChat", {})
-    if activate.get("keys"):
-        send_key_combo(*activate["keys"], wait_ms=500)
+    try:
+        location = pyautogui.locateOnScreen(str(image_path), confidence=confidence)
+        if location:
+            offset = select.get("clickOffset", {"x": 0, "y": 0})
+            x = location.left + location.width // 2 + offset.get("x", 0)
+            y = location.top + location.height // 2 + offset.get("y", 0)
+            return (x, y)
+    except Exception as e:
+        print(f"  ✗ Image recognition failed: {e}")
+        print(f"  → Make sure 'pip install opencv-python' is done")
 
-    # Step 3: Type the chat name
+    return None
+
+
+def click_chat_in_sidebar() -> bool:
+    """Find and click the target chat in Cola's sidebar."""
     import pyautogui
-    import pyperclip
-    type_select = nav.get("typeAndSelect", {})
-    pyperclip.copy(chat_name)
-    pyautogui.hotkey("ctrl", "v")
-    wait_ms = type_select.get("waitAfterTypeMs", 500)
-    time.sleep(wait_ms / 1000.0)
 
-    # Step 4: Press Enter to select (first result should match)
-    pyautogui.press("enter")
+    pos = find_chat_on_screen()
+    if not pos:
+        # Fallback: tell user what to do
+        print("  ⚠ Could not find chat entry on screen.")
+        print("  → Is the sidebar visible? Is Cola window in foreground?")
+        print("  → Verify chat_sidebar_icon.png matches the actual sidebar text.")
+        return False
+
+    x, y = pos
+    print(f"  🖱 Clicking chat at ({x}, {y})")
+    pyautogui.click(x, y)
     time.sleep(0.3)
-
-    print(f"  Navigated to chat: {chat_name}")
     return True
+
+
+def click_input_area(hwnd, rect) -> bool:
+    """Click the chat input area using window-relative coordinates."""
+    import pyautogui
+
+    nav = config.get("navigation", {})
+    focus = nav.get("focusInput", {})
+    relative = focus.get("windowRelative", {"x": 0.5, "y": 0.9})
+
+    if rect:
+        x = rect.left + int((rect.right - rect.left) * relative["x"])
+        y = rect.top + int((rect.bottom - rect.top) * relative["y"])
+    else:
+        # Fallback: center-bottom of screen
+        import pyautogui as pg
+        x = pg.size()[0] // 2
+        y = int(pg.size()[1] * 0.9)
+
+    pyautogui.click(x, y)
+    time.sleep(0.2)
+    return True
+
+
+# ── Message injection ──────────────────────────────────────────────────
+def select_all_and_delete():
+    """Clear any existing text in the input field."""
+    import pyautogui
+    pyautogui.hotkey("ctrl", "a")
+    time.sleep(0.1)
+    pyautogui.press("delete")
+    time.sleep(0.1)
 
 
 def inject_message(text: str) -> bool:
     """Paste text into the active Cola chat input and press Enter."""
     try:
-        import pyautogui
         import pyperclip
+        import pyautogui
+
+        select_all_and_delete()
         pyperclip.copy(text)
         pyautogui.hotkey("ctrl", "v")
         time.sleep(0.2)
@@ -195,13 +261,25 @@ def process_once() -> int:
     prefix = config.get("triggerPrefix", "[Discord]")
 
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    print(f"[{now}] Processing {len(pending)} message(s) (mod={mod}, chat={chat_name})")
+    print(f"[{now}] Processing {len(pending)} message(s) (mod={mod})")
 
-    if not activate_cola_window():
+    hwnd, rect = find_cola_window()
+    if not hwnd:
+        print("  ✗ Cola window not found. Is Cola running?")
         return 0
 
-    # Navigate to the target chat
-    navigate_to_chat(chat_name)
+    if not activate_cola_window(hwnd):
+        return 0
+
+    # Navigate via mouse
+    nav_mode = config.get("navigation", {}).get("mode", "image")
+    if nav_mode == "image":
+        if not click_chat_in_sidebar():
+            return 0
+
+    # Click input area to ensure focus
+    click_input_area(hwnd, rect)
+    time.sleep(0.2)
 
     for msg in pending:
         author = msg.get("author", "Cherrie")
