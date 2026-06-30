@@ -7,32 +7,32 @@
     "mode": "coordinate",
     "selectChat": {
       "coordinates": {
-        "x": 284,
-        "y": 124,
+        "x": 242,
+        "y": 343,
         "description": "Sidebar: 'Discord Chat' entry"
       },
       "description": "Sidebar: 'Discord Chat' entry"
     },
     "focusInput": {
       "coordinates": {
-        "x": 798,
-        "y": 1010,
+        "x": 863,
+        "y": 1012,
         "description": "Chat input area (bottom of Cola)"
       },
       "description": "Chat input area (bottom of Cola)"
     },
     "modelSelector": {
       "coordinates": {
-        "x": 1441,
-        "y": 1050,
+        "x": 1451,
+        "y": 1053,
         "description": "Model selector button (e.g. 'Lite')"
       },
       "description": "Model selector button (e.g. 'Lite')"
     },
     "modSelector": {
       "coordinates": {
-        "x": 1508,
-        "y": 126,
+        "x": 1505,
+        "y": 121,
         "description": "Mod selector button (top-left of Cola)"
       },
       "description": "Mod selector button (top-left of Cola)"
@@ -72,13 +72,13 @@
   },
   "switchMod": {
     "cola": {
-      "x": 771,
-      "y": 580,
+      "x": 763,
+      "y": 554,
       "description": "Switch Mod modal: Cola (orange card)"
     },
     "vibe_cola": {
-      "x": 1153,
-      "y": 574,
+      "x": 1163,
+      "y": 553,
       "description": "Switch Mod modal: Vibe Cola (anime card)"
     }
   },

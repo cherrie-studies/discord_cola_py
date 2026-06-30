@@ -97,37 +97,8 @@ def navigate_to_discord_chat():
         click_at(inp["x"], inp["y"], 200)
         print(f"   🖱  Input ({inp['x']}, {inp['y']})")
 
-def inject_setup_prompt(reply_file):
-    """One-time setup: teach Cola the Discord relay protocol."""
-    prompt = (
-        'You are connected to Discord via a relay bot. '
-        'Messages prefixed with [Discord] are from me (Cherrie) chatting from Discord.\n\n'
-        'Rules:\n'
-        '1. When you see [Discord] <name>: <message>, treat it as me speaking.\n'
-        '2. Reply naturally in my language (Vietnamese or English).\n'
-        '3. Keep replies under 1800 chars. Split if needed.\n'
-        '4. Write your ENTIRE response to this file (overwrite, no extra text):\n'
-        f'   {reply_file}\n'
-        '5. The relay bot reads that file and sends it to Discord.\n'
-        '6. Use your full capabilities: memory bank, tools, web search.\n'
-        '7. To send images/screenshots/files (<8MB): after your text reply,\n'
-        '   add a line with ---file--- then the absolute path on each following line.\n'
-        '   Example:\n'
-        '     Here is the screenshot you asked for\n'
-        '     ---file---\n'
-        '     C:\\Users\\Cherrie\\cola\\outputs\\chart.png\n'
-        '   The bot will upload it to Discord automatically.\n\n'
-        'Confirm by writing just "OK" to the file.'
-    )
-    pyautogui.hotkey("ctrl", "a"); time.sleep(0.05)
-    pyautogui.press("delete"); time.sleep(0.03)
-    pyperclip.copy(prompt)
-    pyautogui.hotkey("ctrl", "v"); time.sleep(0.1)
-    pyautogui.press("enter"); time.sleep(0.1)
-
-
 def inject_message(text):
-    """Inject just the Discord message into Cola."""
+    """Inject the Discord message into Cola."""
     pyautogui.hotkey("ctrl", "a"); time.sleep(0.05)
     pyautogui.press("delete"); time.sleep(0.03)
     pyperclip.copy(text)
@@ -248,27 +219,10 @@ class ColaBridge(discord.Client):
 
 # ═══════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    if "--init" in sys.argv:
-        print("Sending setup prompt to Cola...")
-        print("Make sure 'Discord Chat' is the active session in Cola.")
-        print()
-        if not activate_cola():
-            print("❌ Cola not running.")
-            sys.exit(1)
-        navigate_to_discord_chat()
-        inject_setup_prompt(REPLY_FILE)
-        print("✅ Setup prompt injected. Cola should write 'OK' to reply.txt.")
-        print(f"   Watching {REPLY_FILE}...")
-        response = watch_reply_file(REPLY_FILE, timeout_s=30)
-        if response:
-            print(f"   Response: {response[:200]}")
-        else:
-            print("   ⏰ No confirmation. Check if Cola processed the prompt.")
-        sys.exit(0)
-
     print("Discord ↔ Cola (keyboard injection + reply file)")
     print("=" * 50)
     print(f"   Reply file: {REPLY_FILE}")
+    print(f"   Setup: copy INIT_PROMPT.md into Cola's 'Discord Chat' first")
     if not DISCORD_TOKEN:
         print("❌ DISCORD_TOKEN not set")
         sys.exit(1)
