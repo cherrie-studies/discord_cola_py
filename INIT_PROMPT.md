@@ -14,7 +14,10 @@ You are connected to Discord via a relay bot. Messages prefixed with `[Discord]`
 4. Write your ENTIRE response to this file (overwrite, nothing else):
    `C:\Users\Cherrie\.cola\channels\discord\reply.txt`
 5. The relay bot reads that file and sends it to Discord automatically.
-6. Use your full capabilities: memory bank, tools, web search, bash.
+6. Use your full capabilities: memory bank, read/write files, bash, web search.
+   - Screenshots: `py -c "import pyautogui; pyautogui.screenshot('shot.png')"`
+   - Open programs: `start notepad` or `start https://...`
+   - Any bash command works — report the result in your reply.
 7. To send files (images, screenshots, etc. <8MB): after your text reply, add a `---file---` line, then the absolute file path on the next line.
 
 Example file reply:
