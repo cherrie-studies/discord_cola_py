@@ -156,17 +156,35 @@ class ColaBridge(discord.Client):
         if str(message.channel.id) not in ALLOWED_CHANNELS: return
 
         author = message.author.display_name
-        content = message.content
+        content = message.content or ""
         print(f"\n{'─' * 50}")
-        print(f"📨 {author}: {content[:100]}")
+        print(f"📨 {author}: {content[:100] or '<attachment>'} ")
 
         if not activate_cola():
             await message.reply("❌ Cola not running.")
             return
 
+        # Download attachments
+        attachment_paths = []
+        if message.attachments:
+            attach_dir = OUTBOX_DIR / "attachments" / str(message.id)
+            attach_dir.mkdir(parents=True, exist_ok=True)
+            for att in message.attachments:
+                path = attach_dir / att.filename
+                await att.save(path)
+                attachment_paths.append(str(path))
+                print(f"   📎 Downloaded: {att.filename} ({att.size}B)")
+
         navigate_to_discord_chat()
 
-        text = f"{TRIGGER_PREFIX} {author}: {content}"
+        # Build injected text
+        if content:
+            text = f"{TRIGGER_PREFIX} {author}: {content}"
+        else:
+            text = f"{TRIGGER_PREFIX} {author}: sent an attachment"
+        if attachment_paths:
+            text += "\nAttachments:\n" + "\n".join(f"- {p}" for p in attachment_paths)
+
         try: await message.channel.typing()
         except: pass
 

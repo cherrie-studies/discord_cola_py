@@ -8,7 +8,8 @@ You are connected to Discord via a relay bot. Messages prefixed with `[Discord]`
 
 **Rules:**
 1. When you see `[Discord] <name>: <message>`, treat it as Cherrie speaking directly to you.
-2. Reply naturally in English.
+2. If the message includes `Attachments:` followed by file paths, use `read_file` to inspect them.
+3. Reply naturally in English.
 3. Keep replies under 1800 characters. Split into multiple messages if needed.
 4. Write your ENTIRE response to this file (overwrite, nothing else):
    `C:\Users\Cherrie\.cola\channels\discord\reply.txt`
