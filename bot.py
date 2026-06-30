@@ -47,10 +47,10 @@ if CONFIG_FILE.exists():
     config = json.loads(CONFIG_FILE.read_text())
 
 TRIGGER_PREFIX = config.get("triggerPrefix", "[Discord]")
-COLA_SESSION_DIR = Path.home() / ".cola" / "sessions" / "desktop-local"
-STATE_FILE = COLA_SESSION_DIR / "state.json"
+OUTBOX_DIR = Path.home() / ".cola" / "channels" / "discord"
+REPLY_FILE = Path(os.environ.get("COLA_REPLY_FILE", str(OUTBOX_DIR / "reply.txt")))
 RESPONSE_TIMEOUT_S = 120
-POLL_INTERVAL_S = 1.5
+POLL_INTERVAL_S = 1.0
 
 # ═══════════════════════════════════════════════════════════════════════
 # Cola window control
@@ -97,60 +97,36 @@ def navigate_to_discord_chat():
         click_at(inp["x"], inp["y"], 200)
         print(f"   🖱  Input ({inp['x']}, {inp['y']})")
 
-def inject_message(text):
+def inject_message(text, reply_file):
+    """Paste the prompt into Cola with instructions to write reply to file."""
+    prompt = (
+        f'{text}\n\n'
+        f'After responding above, write your ENTIRE response to this file:\n'
+        f'{reply_file}\n'
+        f'Use write_file or bash to do this. Do NOT reply here — write to the file instead.'
+    )
     pyautogui.hotkey("ctrl", "a"); time.sleep(0.05)
     pyautogui.press("delete"); time.sleep(0.03)
-    pyperclip.copy(text)
+    pyperclip.copy(prompt)
     pyautogui.hotkey("ctrl", "v"); time.sleep(0.1)
     pyautogui.press("enter"); time.sleep(0.1)
 
-# ═══════════════════════════════════════════════════════════════════════
-# Session watcher
-# ═══════════════════════════════════════════════════════════════════════
 
-def get_active_session():
-    if STATE_FILE.exists():
-        state = json.loads(STATE_FILE.read_text())
-        path = state.get("activeSessionFile", "")
-        if path and Path(path).exists():
-            return Path(path)
-    files = sorted(COLA_SESSION_DIR.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
-    return files[0] if files else None
-
-def extract_text(entry):
-    msg = entry.get("message", {})
-    if msg.get("role") != "assistant": return None
-    content = msg.get("content", [])
-    if not isinstance(content, list): return None
-    texts = []
-    for block in content:
-        if block.get("type") == "text":
-            t = block.get("text", "").strip()
-            if t: texts.append(t)
-    return "\n\n".join(texts) if texts else None
-
-async def watch_response(session_file, start_size, timeout_s=RESPONSE_TIMEOUT_S):
+def watch_reply_file(path: Path, timeout_s=RESPONSE_TIMEOUT_S):
+    """Wait for a reply file to appear and have content, then read it."""
     deadline = time.time() + timeout_s
-    last_size = start_size
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Clear any old reply
+    if path.exists():
+        path.write_text("", encoding="utf-8")
     while time.time() < deadline:
-        await asyncio.sleep(POLL_INTERVAL_S)
-        current_file = get_active_session()
-        if current_file and current_file != session_file:
-            session_file = current_file
-            last_size = 0
-        if not session_file.exists(): continue
-        sz = session_file.stat().st_size
-        if sz <= last_size: continue
-        with session_file.open("r", encoding="utf-8") as f:
-            f.seek(last_size)
-            new = f.read()
-        last_size = sz
-        for line in new.strip().split("\n"):
-            if not line.strip(): continue
-            try: entry = json.loads(line)
-            except: continue
-            text = extract_text(entry)
-            if text: return text
+        time.sleep(POLL_INTERVAL_S)
+        if not path.exists():
+            continue
+        content = path.read_text(encoding="utf-8").strip()
+        if content:
+            path.write_text("", encoding="utf-8")  # clear for next time
+            return content
     return None
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -188,17 +164,17 @@ class ColaBridge(discord.Client):
 
         navigate_to_discord_chat()
 
-        session_file = get_active_session()
-        start_size = session_file.stat().st_size if session_file else 0
-        print(f"   📄 Session: {session_file.name if session_file else 'N/A'} ({start_size}B)")
-
         text = f"{TRIGGER_PREFIX} {author}: {content}"
         try: await message.channel.typing()
         except: pass
-        inject_message(text)
-        print(f"   ⌨  Injected: {text[:80]}")
 
-        response = await watch_response(session_file, start_size)
+        reply_file = REPLY_FILE
+        inject_message(text, reply_file)
+        print(f"   ⌨  Injected → watches {reply_file}")
+
+        # Wait for Cola to write reply
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(None, watch_reply_file, reply_file)
 
         if response:
             preview = response[:100].replace("\n", " ")
