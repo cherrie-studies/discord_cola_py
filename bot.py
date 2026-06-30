@@ -198,7 +198,10 @@ class ColaBridge(discord.Client):
 
         # Inject via WebSocket
         text = f"[Discord] {author}: {content}"
-        await message.channel.trigger_typing()
+        try:
+            await message.channel.typing()
+        except AttributeError:
+            pass  # typing indicator is cosmetic
         ok = await ws_inject_prompt(text)
         if not ok:
             await message.reply("❌ Cola not reachable. Is it running?")
