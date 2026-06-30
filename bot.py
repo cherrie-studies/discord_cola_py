@@ -56,49 +56,59 @@ def get_gateway_token():
 # ═══════════════════════════════════════════════════════════════════════
 
 async def ws_inject_prompt(text: str) -> bool:
-    """Send agent.prompt to Cola via WebSocket. Retries once on failure."""
+    """Send agent.prompt to Cola via WebSocket. Keeps connection alive briefly."""
     token = get_gateway_token()
     if not token:
         print("   ❌ No gateway token at ~/.cola/gateway-token")
-        print("   → Is Cola installed? Run Cola once to generate the token.")
         return False
 
     url = f"{COLA_WS_URL}?token={token}"
 
     for attempt in range(2):
+        ws = None
         try:
-            async with websockets.connect(url, close_timeout=5, ping_interval=None) as ws:
-                req = {
-                    "method": "agent.prompt",
-                    "id": f"discord_{int(time.time()*1000)}",
-                    "params": {
-                        "scope": COLA_SCOPE,
-                        "text": text,
-                        "attachments": [],
-                        "hidden": False,
-                    },
-                }
-                await ws.send(json.dumps(req))
-                try:
-                    ack = await asyncio.wait_for(ws.recv(), timeout=3)
-                    data = json.loads(ack)
-                    if data.get("type") == "error":
-                        print(f"   ❌ WS error: {data.get('error', data)}")
-                        return False
-                except asyncio.TimeoutError:
-                    pass
+            ws = await websockets.connect(url, close_timeout=10, ping_interval=None)
+            req = {
+                "method": "agent.prompt",
+                "id": f"discord_{int(time.time()*1000)}",
+                "params": {
+                    "scope": COLA_SCOPE,
+                    "text": text,
+                    "attachments": [],
+                    "hidden": False,
+                },
+            }
+            await ws.send(json.dumps(req))
+            # Must wait for ack before closing — otherwise data may not flush
+            try:
+                ack = await asyncio.wait_for(ws.recv(), timeout=5)
+                data = json.loads(ack)
+                if data.get("type") == "error":
+                    print(f"   ❌ WS error: {data.get('error', data)}")
+                    await ws.close()
+                    return False
+                # Got ack — agent is processing
+                await ws.close()
+                return True
+            except asyncio.TimeoutError:
+                # No ack but connection was fine — assume OK
+                await asyncio.sleep(0.5)  # give time for flush
+                await ws.close()
                 return True
         except websockets.exceptions.InvalidStatus as e:
+            if ws: await ws.close()
             if e.response.status_code == 401:
-                # Token might have changed — re-read once
                 token = get_gateway_token()
                 url = f"{COLA_WS_URL}?token={token}"
                 if attempt == 0:
-                    print(f"   🔄 Token rejected, retrying with fresh read...")
+                    print(f"   🔄 Token rejected, retrying...")
                     continue
-            print(f"   ❌ WS rejected (401) — token mismatch")
+            print(f"   ❌ WS rejected (401)")
             return False
         except Exception as e:
+            if ws:
+                try: await ws.close()
+                except: pass
             if attempt == 0:
                 print(f"   🔄 WS retry: {e}")
                 await asyncio.sleep(1)
