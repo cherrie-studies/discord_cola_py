@@ -1,13 +1,13 @@
 """
-bot.py — Discord ↔ Cola bridge via WebSocket injection
+bot.py — Discord ↔ Cola bridge via keyboard injection
 
   1. Connects to Discord
-  2. On message → injects agent.prompt via Cola's WebSocket (no keyboard!)
+  2. On message → clicks "Discord Chat" in sidebar → clicks input → pastes → Enter
   3. Watches Cola's session JSONL for the response
   4. Sends response back to Discord (webhook or bot)
 
 Setup:
-  pip install discord.py websockets pyperclip  (pyautogui only for fallback launcher)
+  pip install discord.py pyautogui pyperclip
   py bot.py
 """
 
@@ -16,10 +16,13 @@ import json
 import os
 import sys
 import time
+import ctypes
+import ctypes.wintypes
 from pathlib import Path
 
 import discord
-import websockets
+import pyautogui
+import pyperclip
 
 # ═══════════════════════════════════════════════════════════════════════
 # Config
@@ -38,84 +41,68 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK", "")
 ALLOWED_CHANNELS = os.getenv("DISCORD_CHANNEL_IDS", "1519719204071280640").split(",")
 
-GATEWAY_TOKEN_FILE = Path.home() / ".cola" / "gateway-token"
-COLA_WS_URL = "ws://127.0.0.1:19532"
-COLA_SCOPE = "desktop:local"
+CONFIG_FILE = SCRIPT_DIR / "trigger_config.json"
+config = {}
+if CONFIG_FILE.exists():
+    config = json.loads(CONFIG_FILE.read_text())
+
+TRIGGER_PREFIX = config.get("triggerPrefix", "[Discord]")
 COLA_SESSION_DIR = Path.home() / ".cola" / "sessions" / "desktop-local"
 STATE_FILE = COLA_SESSION_DIR / "state.json"
 RESPONSE_TIMEOUT_S = 120
 POLL_INTERVAL_S = 1.5
 
-def get_gateway_token():
-    if GATEWAY_TOKEN_FILE.exists():
-        return GATEWAY_TOKEN_FILE.read_text().strip()
-    return ""
-
 # ═══════════════════════════════════════════════════════════════════════
-# WebSocket injection
+# Cola window control
 # ═══════════════════════════════════════════════════════════════════════
+user32 = ctypes.windll.user32
 
-async def ws_inject_prompt(text: str) -> bool:
-    """Send agent.prompt to Cola via WebSocket. Keeps connection alive briefly."""
-    token = get_gateway_token()
-    if not token:
-        print("   ❌ No gateway token at ~/.cola/gateway-token")
-        return False
+def find_cola():
+    hwnd = user32.FindWindowW("Chrome_WidgetWin_1", "Cola")
+    if not hwnd:
+        result = []
+        def cb(h, _):
+            n = user32.GetWindowTextLengthW(h)
+            if n:
+                b = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(h, b, n + 1)
+                if b.value and "Cola" in b.value:
+                    result.append(h); return False
+            return True
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+        user32.EnumWindows(WNDENUMPROC(cb), 0)
+        hwnd = result[0] if result else None
+    return hwnd
 
-    url = f"{COLA_WS_URL}?token={token}"
+def activate_cola():
+    hwnd = find_cola()
+    if not hwnd: return False
+    user32.ShowWindow(hwnd, 9)
+    user32.SetForegroundWindow(hwnd)
+    time.sleep(0.4)
+    return True
 
-    for attempt in range(2):
-        ws = None
-        try:
-            ws = await websockets.connect(url, close_timeout=10, ping_interval=None)
-            req = {
-                "method": "agent.prompt",
-                "id": f"discord_{int(time.time()*1000)}",
-                "params": {
-                    "scope": COLA_SCOPE,
-                    "text": text,
-                    "attachments": [],
-                    "hidden": False,
-                },
-            }
-            await ws.send(json.dumps(req))
-            # Must wait for ack before closing — otherwise data may not flush
-            try:
-                ack = await asyncio.wait_for(ws.recv(), timeout=5)
-                data = json.loads(ack)
-                if data.get("type") == "error":
-                    print(f"   ❌ WS error: {data.get('error', data)}")
-                    await ws.close()
-                    return False
-                # Got ack — agent is processing
-                await ws.close()
-                return True
-            except asyncio.TimeoutError:
-                # No ack but connection was fine — assume OK
-                await asyncio.sleep(0.5)  # give time for flush
-                await ws.close()
-                return True
-        except websockets.exceptions.InvalidStatus as e:
-            if ws: await ws.close()
-            if e.response.status_code == 401:
-                token = get_gateway_token()
-                url = f"{COLA_WS_URL}?token={token}"
-                if attempt == 0:
-                    print(f"   🔄 Token rejected, retrying...")
-                    continue
-            print(f"   ❌ WS rejected (401)")
-            return False
-        except Exception as e:
-            if ws:
-                try: await ws.close()
-                except: pass
-            if attempt == 0:
-                print(f"   🔄 WS retry: {e}")
-                await asyncio.sleep(1)
-                continue
-            print(f"   ❌ WS failed: {e}")
-            return False
-    return False
+def click_at(x, y, wait_ms=300):
+    pyautogui.click(x, y)
+    time.sleep(wait_ms / 1000.0)
+
+def navigate_to_discord_chat():
+    nav = config.get("navigation", {})
+    chat = nav.get("selectChat", {}).get("coordinates", {})
+    inp = nav.get("focusInput", {}).get("coordinates", {})
+    if chat.get("x"):
+        click_at(chat["x"], chat["y"], 300)
+        print(f"   🖱  Sidebar ({chat['x']}, {chat['y']})")
+    if inp.get("x"):
+        click_at(inp["x"], inp["y"], 200)
+        print(f"   🖱  Input ({inp['x']}, {inp['y']})")
+
+def inject_message(text):
+    pyautogui.hotkey("ctrl", "a"); time.sleep(0.05)
+    pyautogui.press("delete"); time.sleep(0.03)
+    pyperclip.copy(text)
+    pyautogui.hotkey("ctrl", "v"); time.sleep(0.1)
+    pyautogui.press("enter"); time.sleep(0.1)
 
 # ═══════════════════════════════════════════════════════════════════════
 # Session watcher
@@ -132,17 +119,14 @@ def get_active_session():
 
 def extract_text(entry):
     msg = entry.get("message", {})
-    if msg.get("role") != "assistant":
-        return None
+    if msg.get("role") != "assistant": return None
     content = msg.get("content", [])
-    if not isinstance(content, list):
-        return None
+    if not isinstance(content, list): return None
     texts = []
     for block in content:
         if block.get("type") == "text":
             t = block.get("text", "").strip()
-            if t:
-                texts.append(t)
+            if t: texts.append(t)
     return "\n\n".join(texts) if texts else None
 
 async def watch_response(session_file, start_size, timeout_s=RESPONSE_TIMEOUT_S):
@@ -154,16 +138,14 @@ async def watch_response(session_file, start_size, timeout_s=RESPONSE_TIMEOUT_S)
         if current_file and current_file != session_file:
             session_file = current_file
             last_size = 0
-        if not session_file.exists():
-            continue
+        if not session_file.exists(): continue
         sz = session_file.stat().st_size
-        if sz <= last_size:
-            continue
+        if sz <= last_size: continue
         with session_file.open("r", encoding="utf-8") as f:
             f.seek(last_size)
-            new_text = f.read()
+            new = f.read()
         last_size = sz
-        for line in new_text.strip().split("\n"):
+        for line in new.strip().split("\n"):
             if not line.strip(): continue
             try: entry = json.loads(line)
             except: continue
@@ -183,9 +165,9 @@ class ColaBridge(discord.Client):
 
     async def on_ready(self):
         print(f"✅ Discord: {self.user}")
-        print(f"   WS injection: {COLA_WS_URL}")
-        print(f"   Scope: {COLA_SCOPE}")
-        print(f"   Webhook: {'✅ configured' if DISCORD_WEBHOOK else '❌ not set (bot replies)'}")
+        print(f"   Channels: {ALLOWED_CHANNELS}")
+        print(f"   Config: {'✅ loaded' if config else '⚠  not found'}")
+        print(f"   Webhook: {'✅' if DISCORD_WEBHOOK else '❌ (bot replies)'}")
         await self.change_presence(
             status=discord.Status.online,
             activity=discord.Activity(type=discord.ActivityType.watching, name="Cola for replies"),
@@ -200,25 +182,22 @@ class ColaBridge(discord.Client):
         print(f"\n{'─' * 50}")
         print(f"📨 {author}: {content[:100]}")
 
-        # Snapshot session
+        if not activate_cola():
+            await message.reply("❌ Cola not running.")
+            return
+
+        navigate_to_discord_chat()
+
         session_file = get_active_session()
         start_size = session_file.stat().st_size if session_file else 0
-        sess = session_file.name if session_file else "N/A"
-        print(f"   📄 Session: {sess} ({start_size}B)")
+        print(f"   📄 Session: {session_file.name if session_file else 'N/A'} ({start_size}B)")
 
-        # Inject via WebSocket
-        text = f"[Discord] {author}: {content}"
-        try:
-            await message.channel.typing()
-        except AttributeError:
-            pass  # typing indicator is cosmetic
-        ok = await ws_inject_prompt(text)
-        if not ok:
-            await message.reply("❌ Cola not reachable. Is it running?")
-            return
-        print(f"   ⚡ WS injected: {text[:80]}")
+        text = f"{TRIGGER_PREFIX} {author}: {content}"
+        try: await message.channel.typing()
+        except: pass
+        inject_message(text)
+        print(f"   ⌨  Injected: {text[:80]}")
 
-        # Watch for response
         response = await watch_response(session_file, start_size)
 
         if response:
@@ -238,15 +217,15 @@ class ColaBridge(discord.Client):
                 print("   ✅ Sent as Cola (webhook)")
                 return
             except Exception as e:
-                print(f"   ⚠ Webhook failed: {e}")
+                print(f"   ⚠ Webhook: {e}")
         for chunk in [text[i:i+1900] for i in range(0, len(text), 1900)]:
             await message.reply(chunk)
         print("   ✅ Sent as bot")
 
 # ═══════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    print("Discord ↔ Cola (WebSocket injection)")
-    print("=" * 40)
+    print("Discord ↔ Cola (keyboard injection + session watcher)")
+    print("=" * 55)
     if not DISCORD_TOKEN:
         print("❌ DISCORD_TOKEN not set")
         sys.exit(1)
