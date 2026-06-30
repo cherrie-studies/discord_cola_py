@@ -109,7 +109,14 @@ def inject_setup_prompt(reply_file):
         '4. Write your ENTIRE response to this file (overwrite, no extra text):\n'
         f'   {reply_file}\n'
         '5. The relay bot reads that file and sends it to Discord.\n'
-        '6. Use your full capabilities: memory bank, tools, web search.\n\n'
+        '6. Use your full capabilities: memory bank, tools, web search.\n'
+        '7. To send images/screenshots/files (<8MB): after your text reply,\n'
+        '   add a line with ---file--- then the absolute path on each following line.\n'
+        '   Example:\n'
+        '     Here is the screenshot you asked for\n'
+        '     ---file---\n'
+        '     C:\\Users\\Cherrie\\cola\\outputs\\chart.png\n'
+        '   The bot will upload it to Discord automatically.\n\n'
         'Confirm by writing just "OK" to the file.'
     )
     pyautogui.hotkey("ctrl", "a"); time.sleep(0.05)
@@ -129,10 +136,9 @@ def inject_message(text):
 
 
 def watch_reply_file(path: Path, timeout_s=RESPONSE_TIMEOUT_S):
-    """Wait for a reply file to appear and have content, then read it."""
+    """Wait for reply.txt to have content. Returns (text, [file_paths]) or (None, [])."""
     deadline = time.time() + timeout_s
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Clear any old reply
     if path.exists():
         path.write_text("", encoding="utf-8")
     while time.time() < deadline:
@@ -140,10 +146,19 @@ def watch_reply_file(path: Path, timeout_s=RESPONSE_TIMEOUT_S):
         if not path.exists():
             continue
         content = path.read_text(encoding="utf-8").strip()
-        if content:
-            path.write_text("", encoding="utf-8")  # clear for next time
-            return content
-    return None
+        if not content:
+            continue
+        path.write_text("", encoding="utf-8")  # clear
+        # Parse: text before ---file---, file paths after
+        if "---file---" in content:
+            parts = content.split("---file---", 1)
+            text = parts[0].strip()
+            files = [f.strip() for f in parts[1].strip().split("\n") if f.strip()]
+            # Validate paths exist
+            files = [f for f in files if Path(f).exists() and Path(f).stat().st_size < 8_000_000]
+            return text, files
+        return content, []
+    return None, []
 
 # ═══════════════════════════════════════════════════════════════════════
 # Discord bot
@@ -189,29 +204,47 @@ class ColaBridge(discord.Client):
         print(f"   ⌨  {text[:80]}")
 
         loop = asyncio.get_running_loop()
-        response = await loop.run_in_executor(None, watch_reply_file, reply_file)
+        text, files = await loop.run_in_executor(None, watch_reply_file, reply_file)
 
-        if response:
-            preview = response[:100].replace("\n", " ")
-            print(f"   🤖 {preview}...")
-            await self.send_reply(message, response)
+        if text or files:
+            if text:
+                preview = text[:100].replace("\n", " ")
+                print(f"   🤖 {preview}...")
+            if files:
+                print(f"   📎 {len(files)} file(s): {[Path(f).name for f in files]}")
+            await self.send_reply(message, text, files)
         else:
             await message.reply("⏰ No response from Cola.")
             print("   ❌ Timeout")
 
-    async def send_reply(self, message: discord.Message, text: str):
+    async def send_reply(self, message: discord.Message, text: str = "", files: list = None):
+        files = files or []
+        discord_files = []
+        for fp in files:
+            try:
+                discord_files.append(discord.File(fp))
+            except Exception as e:
+                print(f"   ⚠ File attach failed: {fp} — {e}")
+
         if DISCORD_WEBHOOK:
             try:
                 webhook = discord.Webhook.from_url(DISCORD_WEBHOOK, client=self)
-                for chunk in [text[i:i+1900] for i in range(0, len(text), 1900)]:
-                    await webhook.send(content=chunk, username="Cola", wait=True)
-                print("   ✅ Sent as Cola (webhook)")
+                for chunk in [text[i:i+1900] for i in range(0, len(text), 1900)] if text else [""]:
+                    kwargs = {"content": chunk, "username": "Cola", "wait": True}
+                    if discord_files and chunk == ([text[i:i+1900] for i in range(0, len(text), 1900)] if text else [""])[-1]:
+                        kwargs["files"] = discord_files
+                    await webhook.send(**kwargs)
+                print(f"   ✅ Sent as Cola (webhook)" + (f" + {len(files)} files" if files else ""))
                 return
             except Exception as e:
                 print(f"   ⚠ Webhook: {e}")
-        for chunk in [text[i:i+1900] for i in range(0, len(text), 1900)]:
-            await message.reply(chunk)
-        print("   ✅ Sent as bot")
+        # Fallback: bot reply
+        for chunk in [text[i:i+1900] for i in range(0, len(text), 1900)] if text else [""]:
+            kwargs = {"content": chunk}
+            if discord_files and chunk == ([text[i:i+1900] for i in range(0, len(text), 1900)] if text else [""])[-1]:
+                kwargs["files"] = discord_files
+            await message.reply(**kwargs)
+        print("   ✅ Sent as bot" + (f" + {len(files)} files" if files else ""))
 
 # ═══════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
